@@ -144,7 +144,7 @@ class db_query(object):
             # Get field name and field type
             sql_text0 = 'select sc.name,st.name from syscolumns sc,systypes st ' \
                         'where sc.xtype=st.xtype and sc.id in(select id from sysobjects ' \
-                        'where xtype=\'U\' and name=\'%s\') order by sc.colid;' % (tab_name)
+                        'where name=\'%s\') order by sc.colid;' % (tab_name)
             self.cur.execute(sql_text0)
             column_need = self.cur.fetchall()
             df_col0 = pd.DataFrame(column_need)
@@ -160,6 +160,8 @@ class db_query(object):
             df_comments = pd.DataFrame(comment_need1)
             df_col = pd.concat([df_col0, df_comments], axis=1, ignore_index=True)
 
+        df_col = df_col.drop_duplicates(subset=[0], keep='first').reset_index()
+        # Sometimes it is necessary to de duplicate by field name
         return df_col
 
     def ob_tabcom(self,tab_name):
@@ -196,6 +198,51 @@ class db_query(object):
                     else comment_tab[0][0].decode('utf-8')
 
         return comments_tab
+
+    def ob_data(self,tab_name,head_num=0):
+        '''
+        use to obtain data from the table
+        :param tab_name: str,The name of the table
+        :param head_num: int,Number of lines displayed at the beginning
+        :return: data in dataframe format
+        '''
+        if head_num:
+            # get the first few rows of data
+            if self.db_type == 'mysql':
+                sql = 'SELECT * FROM ' + tab_name + ' limit %s;'%str(head_num)
+            elif self.db_type == 'oracle':
+                sql = 'SELECT * FROM ' + self.schema_name + '.' + tab_name + ' WHERE ROWNUM<%s'%str(head_num+1)
+            else:
+                sql = 'SELECT top %s * FROM '%str(head_num) + tab_name + ' ;'
+        else:
+            # Get all the data
+            if self.db_type == 'mysql':
+                sql = 'SELECT * FROM ' + tab_name + ' ;'  # 获取表数据
+            elif self.db_type == 'oracle':
+                sql = 'SELECT * FROM ' + self.schema_name+'.'+tab_name + ' ;'  # 获取表数据
+            else:
+                sql = 'SELECT * FROM ' + tab_name + ' ;'  # 获取表数据
+        self.cur.execute(sql)
+        rets = self.cur.fetchall()
+        print(rets)
+        # get the column name
+        col_name = list(db_query.ob_colinfo(self,tab_name)[0])
+        if len(rets):
+            ob_tabdata = pd.DataFrame(list(rets), columns=col_name)  # Get the data and convert it to dateframe format
+        else:
+            ob_tabdata = pd.DataFrame(columns=col_name) # If there is no data, an empty dataframe is generated
+
+        # This function is used to solve the problem of SqlServer data coding.
+        def deal_str(x):
+            if isinstance(x,str):
+                return x.encode('latin-1').decode('gbk')
+        if self.db_type == 'sqlserver':
+            df_col = db_query.ob_colinfo(self, tab_name)
+            print('df_col',df_col)
+            data_type_tran = list(df_col[df_col[1]!='nvarchar'][0]) # Exclude nvarchar types
+            ob_tabdata = ob_tabdata[data_type_tran].applymap(deal_str)
+
+        return ob_tabdata
 
     def create_hivetab(self,tab_name,table_type):
         """
